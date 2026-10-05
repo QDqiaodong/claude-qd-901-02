@@ -135,7 +135,10 @@ public class MonitorService {
 
         Map<Long, LatestTempDTO> latestMap = new HashMap<>();
         for (LatestTempDTO dto : sampleRepository.findLatestPerResident()) {
-            latestMap.put(dto.getResidentId(), dto);
+            // 查询已保证每户唯一一行；此处再按同一口径兜底，同户多行时只保留最新的一条
+            latestMap.merge(dto.getResidentId(), dto,
+                    (oldDto, newDto) -> isNewerSample(newDto.getSampleDate(), newDto.getSampleId(),
+                            oldDto.getSampleDate(), oldDto.getSampleId()) ? newDto : oldDto);
         }
 
         Map<String, List<Resident>> grouped = new LinkedHashMap<>();
@@ -180,8 +183,8 @@ public class MonitorService {
                     unqualifiedCount++;
                     cellUnqualified++;
                 }
-                if (latestDate == null || dto.getSampleDate() == null
-                        || (latestDate != null && dto.getSampleDate().isAfter(latestDate))) {
+                // 格子级「最近一次」与每户口径一致：业务日期优先，同日再按抽测 id（录入先后）取大
+                if (isNewerSample(dto.getSampleDate(), dto.getSampleId(), latestDate, latestSampleId)) {
                     latestDate = dto.getSampleDate();
                     latestTemp = dto.getTemperature();
                     latestSampleId = dto.getSampleId();
@@ -362,6 +365,32 @@ public class MonitorService {
                 resident.isMerged(),
                 resident.getMergedInto() == null ? null : resident.getMergedInto().getId(),
                 resident.getMergeNo());
+    }
+
+    /**
+     * 「最近一次」稳定判定：抽测日期（业务日期）晚者胜；同一天再按抽测 id
+     * （自增主键 = 真实录入先后）大者胜；空日期视为最早。首个候选直接成为当前最新。
+     * 与 {@link com.heat.supply.repository.RoomTempSampleRepository#findLatestPerResident()}
+     * 的每户取数口径一致，保证格子温度 / 达标结论 / 抽测编号始终指向同一条记录。
+     */
+    private boolean isNewerSample(LocalDate candidateDate, Long candidateId,
+                                  LocalDate currentDate, Long currentId) {
+        if (currentDate == null && currentId == null) {
+            return true;
+        }
+        if (candidateDate == null) {
+            return false;
+        }
+        if (currentDate == null) {
+            return true;
+        }
+        int byDate = candidateDate.compareTo(currentDate);
+        if (byDate != 0) {
+            return byDate > 0;
+        }
+        long candId = candidateId == null ? Long.MIN_VALUE : candidateId;
+        long currId = currentId == null ? Long.MIN_VALUE : currentId;
+        return candId > currId;
     }
 
     private BigDecimal nvl(BigDecimal value) {
