@@ -125,6 +125,8 @@ CREATE TABLE resident (
 ) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COLLATE = utf8mb4_unicode_ci;
 
 -- ---------------- 室温抽测 ----------------
+-- 同一住户同一天允许存在多条抽测记录（两人先后/近同时补录），历史记录完整保留、不覆盖不删除；
+-- 「最近一次」一律按 (sample_date, id) 判定：业务日期优先，同日再按自增 id（即真实落库先后）。
 CREATE TABLE room_temp_sample (
     id BIGINT AUTO_INCREMENT PRIMARY KEY,
     resident_id BIGINT NOT NULL,
@@ -135,6 +137,7 @@ CREATE TABLE room_temp_sample (
     surveyor VARCHAR(32) COMMENT '抽测人',
     remark VARCHAR(128),
     KEY idx_sample_resident (resident_id),
+    KEY idx_sample_resident_date (resident_id, sample_date, id),
     CONSTRAINT fk_sample_resident FOREIGN KEY (resident_id) REFERENCES resident (id)
 ) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COLLATE = utf8mb4_unicode_ci;
 

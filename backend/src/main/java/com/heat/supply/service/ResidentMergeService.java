@@ -186,14 +186,16 @@ public class ResidentMergeService {
 
         // 室温抽测
         List<MergePreviewVO.SampleRef> samples = new ArrayList<>();
-        for (RoomTempSample s : sampleRepository.findByResidentIdOrderBySampleDateDesc(keeper.getId())) {
+        for (RoomTempSample s : sampleRepository.findByResidentIdOrderBySampleDateDescIdDesc(keeper.getId())) {
             samples.add(toSampleRef(s, "keeper"));
         }
-        for (RoomTempSample s : sampleRepository.findByResidentIdOrderBySampleDateDesc(merged.getId())) {
+        for (RoomTempSample s : sampleRepository.findByResidentIdOrderBySampleDateDescIdDesc(merged.getId())) {
             samples.add(toSampleRef(s, "merged"));
         }
         samples.sort(Comparator.comparing(MergePreviewVO.SampleRef::getSampleDate,
-                Comparator.nullsLast(Comparator.reverseOrder())));
+                        Comparator.nullsLast(Comparator.reverseOrder()))
+                .thenComparing(MergePreviewVO.SampleRef::getId,
+                        Comparator.nullsLast(Comparator.reverseOrder())));
         vo.setSamples(samples);
 
         // 报修工单
@@ -347,7 +349,7 @@ public class ResidentMergeService {
         LocalDateTime now = LocalDateTime.now();
 
         // 迁移动作前先记账（审计口径），并据此核对实际影响行数
-        int expectedSamples = (int) sampleRepository.findByResidentIdOrderBySampleDateDesc(mergedId).size();
+        int expectedSamples = (int) sampleRepository.findByResidentIdOrderBySampleDateDescIdDesc(mergedId).size();
         int expectedOrders = 0;
         for (RepairOrder o : orderRepository.findAll()) {
             if (o.getResident() != null && mergedId.equals(o.getResident().getId())) {
@@ -699,7 +701,7 @@ public class ResidentMergeService {
         p.setStationName(station == null ? null : station.getName());
         p.setSupplyStatus(r.getSupplyStatus());
         p.setContactPhone(r.getContactPhone());
-        p.setSampleCount((int) sampleRepository.findByResidentIdOrderBySampleDateDesc(r.getId()).size());
+        p.setSampleCount((int) sampleRepository.findByResidentIdOrderBySampleDateDescIdDesc(r.getId()).size());
         int orderCount = 0;
         for (RepairOrder o : orderRepository.findAll()) {
             if (o.getResident() != null && r.getId().equals(o.getResident().getId())) {

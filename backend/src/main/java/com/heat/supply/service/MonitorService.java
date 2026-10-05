@@ -133,9 +133,14 @@ public class MonitorService {
                 : community;
         List<Resident> residents = residentRepository.findByCommunityOrderByBuildingNoAscUnitNoAscRoomNoAsc(target);
 
+        // 每户唯一一条最新抽测（业务日期最大、同日再取录入 id 最大），查询本身已保证每户一行，
+        // 这里仍按 id 兜底归并，杜绝同日多条在刷新时来回覆盖。
         Map<Long, LatestTempDTO> latestMap = new HashMap<>();
         for (LatestTempDTO dto : sampleRepository.findLatestPerResident()) {
-            latestMap.put(dto.getResidentId(), dto);
+            LatestTempDTO existed = latestMap.get(dto.getResidentId());
+            if (existed == null || isLaterThan(dto, existed)) {
+                latestMap.put(dto.getResidentId(), dto);
+            }
         }
 
         Map<String, List<Resident>> grouped = new LinkedHashMap<>();
@@ -164,6 +169,8 @@ public class MonitorService {
             Long latestSampleId = null;
             int cellUnqualified = 0;
             int cellSamples = 0;
+            // 格内每个「最近一次不达标」住户的抽测 id：一键报修按户引用，不会错挂到达标住户
+            List<Long> unqualifiedSampleIds = new ArrayList<>();
             for (Resident resident : group) {
                 residentIds.add(resident.getId());
                 LatestTempDTO dto = latestMap.get(resident.getId());
@@ -179,9 +186,13 @@ public class MonitorService {
                 } else {
                     unqualifiedCount++;
                     cellUnqualified++;
+                    if (dto.getSampleId() != null) {
+                        unqualifiedSampleIds.add(dto.getSampleId());
+                    }
                 }
-                if (latestDate == null || dto.getSampleDate() == null
-                        || (latestDate != null && dto.getSampleDate().isAfter(latestDate))) {
+                // 格内最近一条：业务日期优先，同日按录入先后（id）比较，次序确定
+                if (latestDate == null || isLaterSample(dto.getSampleDate(), dto.getSampleId(),
+                        latestDate, latestSampleId)) {
                     latestDate = dto.getSampleDate();
                     latestTemp = dto.getTemperature();
                     latestSampleId = dto.getSampleId();
@@ -200,7 +211,8 @@ public class MonitorService {
                     Dict.isTempOverheated(latestTemp),
                     cellUnqualified,
                     latestSampleId,
-                    households));
+                    households,
+                    unqualifiedSampleIds));
         }
 
         BigDecimal rate = sampled == 0
@@ -212,11 +224,11 @@ public class MonitorService {
                 residents.size(), sampled, qualifiedCount, unqualifiedCount, rate);
     }
 
-    /** 手写 JPQL：按换热站统计不达标室温户数 */
+    /** 手写 JPQL：按换热站统计不达标室温户数（口径与热力格一致：只认每户最近一次抽测结论） */
     @Transactional(readOnly = true)
     public List<StationTempStatDTO> stationTempStat() {
         List<StationTempStatDTO> list = new ArrayList<>(
-                stationRepository.tempStatGroupByStation(Dict.MIN_QUALIFIED_TEMP));
+                stationRepository.tempStatGroupByStation());
         list.sort(Comparator.comparing(StationTempStatDTO::getUnqualifiedCount,
                 Comparator.reverseOrder()).thenComparing(StationTempStatDTO::getStationCode));
         return list;
@@ -370,5 +382,47 @@ public class MonitorService {
 
     private String nvl(String value) {
         return value == null ? "" : value;
+    }
+
+    /**
+     * 抽测先后的唯一判定：业务日期优先，同日再按录入先后（自增 id）。
+     * 顺序确定，不依赖数据库返回顺序；较早日的记录即使温度更低也不会被当成最新结果。
+     */
+    private boolean isLaterSample(LocalDate date, Long id, LocalDate baseDate, Long baseId) {
+        int cmp = compareDate(date, baseDate);
+        if (cmp != 0) {
+            return cmp > 0;
+        }
+        return compareId(id, baseId) > 0;
+    }
+
+    private boolean isLaterThan(LatestTempDTO a, LatestTempDTO b) {
+        return isLaterSample(a.getSampleDate(), a.getSampleId(), b.getSampleDate(), b.getSampleId());
+    }
+
+    private int compareDate(LocalDate a, LocalDate b) {
+        if (a == null && b == null) {
+            return 0;
+        }
+        if (a == null) {
+            return -1;
+        }
+        if (b == null) {
+            return 1;
+        }
+        return a.compareTo(b);
+    }
+
+    private int compareId(Long a, Long b) {
+        if (a == null && b == null) {
+            return 0;
+        }
+        if (a == null) {
+            return -1;
+        }
+        if (b == null) {
+            return 1;
+        }
+        return a.compareTo(b);
     }
 }

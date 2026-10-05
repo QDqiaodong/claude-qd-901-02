@@ -25,10 +25,13 @@ public class TempCellVO {
     private Integer unqualifiedCount;
     private Long latestSampleId;
     private List<String> households;
+    /** 格内最近一次抽测不达标住户的抽测 id（一键报修逐户引用，保证与最新记录一致） */
+    private List<Long> unqualifiedSampleIds;
 
     public TempCellVO(String buildingNo, String unitNo, List<Long> residentIds, Integer householdCount,
                       Integer sampleCount, BigDecimal latestTemp, LocalDate latestDate, Boolean qualified,
-                      Boolean overheated, Integer unqualifiedCount, Long latestSampleId, List<String> households) {
+                      Boolean overheated, Integer unqualifiedCount, Long latestSampleId, List<String> households,
+                      List<Long> unqualifiedSampleIds) {
         this.buildingNo = buildingNo;
         this.unitNo = unitNo;
         this.residentIds = residentIds;
@@ -41,5 +44,6 @@ public class TempCellVO {
         this.unqualifiedCount = unqualifiedCount;
         this.latestSampleId = latestSampleId;
         this.households = households;
+        this.unqualifiedSampleIds = unqualifiedSampleIds;
     }
 }

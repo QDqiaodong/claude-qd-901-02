@@ -47,11 +47,12 @@
                 <tr v-for="b in grid.buildings" :key="b">
                   <th class="row-head">{{ b }} 号楼</th>
                   <td v-for="u in grid.units" :key="u">
-                    <div v-if="cellAt(b, u)" class="cell" :class="[cellClass(cellAt(b, u)), { 'cell-blink': !cellAt(b, u).qualified }]"
+                    <div v-if="cellAt(b, u)" class="cell" :class="[cellClass(cellAt(b, u)), { 'cell-blink': cellAt(b, u).qualified === false }]"
                          @click="openRecord(cellAt(b, u))">
                       <div class="temp">{{ fmt(cellAt(b, u).latestTemp) }}<span>℃</span></div>
                       <div class="who">{{ cellAt(b, u).households?.[0] || '未录入' }}</div>
                       <div class="date">{{ cellAt(b, u).latestDate || '-' }}</div>
+                      <div v-if="cellAt(b, u).latestSampleId" class="sample-no">#{{ cellAt(b, u).latestSampleId }}</div>
                     </div>
                     <div v-else class="cell empty">—</div>
                   </td>
@@ -68,10 +69,10 @@
           <el-table :data="statRows" border size="small">
             <el-table-column prop="stationCode" label="换热站" width="110" />
             <el-table-column prop="stationName" label="名称" min-width="150" />
-            <el-table-column prop="householdCount" label="抽测户数" width="100" align="right" />
+            <el-table-column prop="householdCount" label="在册户数" width="100" align="right" />
             <el-table-column prop="sampleCount" label="抽测次数" width="100" align="right" />
-            <el-table-column prop="unqualifiedCount" label="不达标次数" width="110" align="right" />
-            <el-table-column label="不达标占比" min-width="200">
+            <el-table-column prop="unqualifiedCount" label="最近抽测不达标户数" width="160" align="right" />
+            <el-table-column label="不达标户数占比" min-width="200">
               <template #default="{ row }">
                 <el-progress :percentage="badRate(row)" :stroke-width="12" text-inside
                              :status="badRate(row) > 30 ? 'exception' : badRate(row) > 10 ? 'warning' : 'success'" />
@@ -82,7 +83,7 @@
       </div>
 
       <div class="action-bar">
-        <span class="hs-muted">共 {{ unqualifiedCells.length }} 个不达标格子需要跟踪</span>
+        <span class="hs-muted">共 {{ unqualifiedSampleTotal }} 户最近一次抽测不达标需要跟踪</span>
         <el-button type="danger" plain :loading="batchLoading" @click="batchCreateOrder">
           一键生成报修工单
         </el-button>
@@ -203,8 +204,19 @@ const minTemp = ref(18)
 const maxTemp = ref(22)
 const recordForm = ref({})
 
+// 不达标口径以后端「每户最近一次抽测结论」为准：qualified === false，不能用温度本地重判
+// （较早的低温记录即使存在，也不是当前结果）
 const unqualifiedCells = computed(() =>
-  grid.value.cells.filter((c) => c.latestTemp !== null && Number(c.latestTemp) < Number(minTemp.value))
+  grid.value.cells.filter((c) => c.qualified === false)
+)
+
+// 需要一键报修的不达标户数：后端按户给出最新抽测 id，逐户引用，绝不拿格内某条历史低温记录充数
+const unqualifiedSampleIds = computed(() =>
+  unqualifiedCells.value.flatMap((c) => c.unqualifiedSampleIds || [])
+)
+
+const unqualifiedSampleTotal = computed(() =>
+  unqualifiedSampleIds.value.length
 )
 
 function cellAt(building, unit) {
@@ -212,6 +224,7 @@ function cellAt(building, unit) {
 }
 
 function cellClass(cell) {
+  if (cell.latestTemp === null || cell.latestTemp === undefined) return 'none'
   const temp = Number(cell.latestTemp)
   if (Number.isNaN(temp)) return 'none'
   if (temp < 18) return 'cold'
@@ -220,7 +233,7 @@ function cellClass(cell) {
 }
 
 function badRate(row) {
-  const total = Number(row.sampleCount || 0)
+  const total = Number(row.householdCount || 0)
   if (!total) return 0
   return Math.round((Number(row.unqualifiedCount || 0) * 100) / total)
 }
@@ -271,20 +284,21 @@ async function submitRecord() {
 }
 
 async function batchCreateOrder() {
-  if (!unqualifiedCells.value.length) {
-    ElMessage.info('当前没有不达标格子')
+  const sampleIds = unqualifiedSampleIds.value
+  if (!sampleIds.length) {
+    ElMessage.info('当前没有最近一次抽测不达标的住户')
     return
   }
   batchLoading.value = true
   let ok = 0
   const failures = []
-  for (const cell of unqualifiedCells.value) {
-    if (!cell.latestSampleId) continue
+  // 每个不达标住户都引用其后端确定的「最近一次」抽测 id，温度/编号与热力格、详情完全一致
+  for (const sampleId of sampleIds) {
     try {
-      await monitorApi.createOrder(cell.latestSampleId)
+      await monitorApi.createOrder(sampleId)
       ok++
     } catch (e) {
-      failures.push(`${cell.buildingNo}号楼${cell.unitNo}单元：${e.message}`)
+      failures.push(`抽测 #${sampleId}：${e.message}`)
     }
   }
   batchLoading.value = false
@@ -399,6 +413,7 @@ onMounted(async () => {
 }
 
 .cell {
+  position: relative;
   min-width: 104px;
   height: 78px;
   padding: 6px;
@@ -463,6 +478,14 @@ onMounted(async () => {
 .cell .date {
   font-size: 10.5px;
   opacity: 0.78;
+}
+
+.cell .sample-no {
+  position: absolute;
+  top: 3px;
+  right: 5px;
+  font-size: 9.5px;
+  opacity: 0.7;
 }
 
 .action-bar {
